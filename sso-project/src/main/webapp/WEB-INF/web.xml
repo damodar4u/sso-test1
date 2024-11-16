@@ -1,0 +1,43 @@
+<web-app xmlns="http://java.sun.com/xml/ns/javaee" version="3.0">
+
+    <!-- Login Servlet -->
+    <servlet>
+        <servlet-name>LoginServlet</servlet-name>
+        <servlet-class>com.example.sso.servlets.LoginServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>LoginServlet</servlet-name>
+        <url-pattern>/login</url-pattern>
+    </servlet-mapping>
+
+    <!-- Authentication Callback Servlet -->
+    <servlet>
+        <servlet-name>AuthCallbackServlet</servlet-name>
+        <servlet-class>com.example.sso.servlets.AuthCallbackServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>AuthCallbackServlet</servlet-name>
+        <url-pattern>/auth/redirect</url-pattern>
+    </servlet-mapping>
+
+    <!-- Admin Only Servlet -->
+    <servlet>
+        <servlet-name>AdminOnlyServlet</servlet-name>
+        <servlet-class>com.example.sso.servlets.AdminOnlyServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>AdminOnlyServlet</servlet-name>
+        <url-pattern>/admin_only</url-pattern>
+    </servlet-mapping>
+
+    <!-- User Only Servlet -->
+    <servlet>
+        <servlet-name>UserOnlyServlet</servlet-name>
+        <servlet-class>com.example.sso.servlets.UserOnlyServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>UserOnlyServlet</servlet-name>
+        <url-pattern>/user_only</url-pattern>
+    </servlet-mapping>
+
+</web-app>
