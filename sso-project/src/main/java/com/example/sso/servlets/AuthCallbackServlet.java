@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class AuthCallbackServlet extends HttpServlet {
     private static final Logger logger = LoggerFactory.getLogger(AuthCallbackServlet.class);
@@ -51,6 +52,9 @@ public class AuthCallbackServlet extends HttpServlet {
                 // Log token details
                 logger.info("Access Token: {}", result.accessToken());
                 logger.info("Account Username: {}", result.account().username());
+
+                // **Print all claims from the ID token**
+                printAllClaims(result.idToken());
 
                 // Extract and assign user roles
                 String userRole = getUserRoleFromToken(result.idToken());
@@ -100,5 +104,26 @@ public class AuthCallbackServlet extends HttpServlet {
 
         // Default role if no roles are found
         return "RegularUser";
+    }
+
+    /**
+     * Print all claims from the ID token for debugging purposes.
+     */
+    private void printAllClaims(String idToken) {
+        try {
+            // Parse the ID token using Nimbus JWT library
+            JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
+
+            // Extract claims from the token
+            JWTClaimsSet claims = jwt.getJWTClaimsSet();
+
+            // Log all claims
+            logger.info("All Claims in the ID Token:");
+            for (Map.Entry<String, Object> entry : claims.getClaims().entrySet()) {
+                logger.info("{}: {}", entry.getKey(), entry.getValue());
+            }
+        } catch (Exception e) {
+            logger.error("Error parsing ID token and printing claims", e);
+        }
     }
 }
