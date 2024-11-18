@@ -21,6 +21,7 @@ public class AuthCallbackServlet extends HttpServlet {
         String authCode = request.getParameter("code");
         String tenantId = "b84a830a-a2a0-4dde-8caf-6f5dd8729519";
         String clientId = "78888168-35a9-4119-ba50-5fe8f05eefa4";
+        String clientSecret = "wrj8Q~GDDSdyrx1jWLj7DaMISypNvoMIP6cpLbSL";
         String redirectUri = "http://localhost:8080/sso-project/auth/redirect";
 
         // Log key parameters
@@ -36,14 +37,14 @@ public class AuthCallbackServlet extends HttpServlet {
                 // Create Confidential Client Application
                 ConfidentialClientApplication app = ConfidentialClientApplication.builder(
                         clientId,
-                        ClientCredentialFactory.createFromSecret("wrj8Q~GDDSdyrx1jWLj7DaMISypNvoMIP6cpLbSL"))
+                        ClientCredentialFactory.createFromSecret(clientSecret))
                         .authority("https://login.microsoftonline.com/" + tenantId)
                         .build();
 
                 // Set up authorization parameters
                 AuthorizationCodeParameters parameters = AuthorizationCodeParameters.builder(
                         authCode, new URI(redirectUri))
-                        .scopes(Collections.singleton("openid profile email"))
+                        .scopes(Collections.singleton("openid profile email Directory.Read.All"))
                         .build();
 
                 // Acquire token and user details
@@ -51,6 +52,7 @@ public class AuthCallbackServlet extends HttpServlet {
 
                 // Log token details
                 logger.info("Access Token: {}", result.accessToken());
+                logger.info("ID Token: {}", result.idToken());
                 logger.info("Account Username: {}", result.account().username());
 
                 // **Print all claims from the ID token**
@@ -98,11 +100,27 @@ public class AuthCallbackServlet extends HttpServlet {
                     return "RegularUser";
                 }
             }
+
+            // Extract groups
+            if (claims.getClaim("groups") != null) {
+                @SuppressWarnings("unchecked")
+                List<String> groups = (List<String>) claims.getClaim("groups");
+
+                logger.info("User belongs to the following groups:");
+                for (String groupId : groups) {
+                    logger.info("Group ID: {}", groupId);
+                }
+
+                // Mock logic: Return admin role if in a specific group
+                if (groups.contains("GroupF")) {
+                    return "PrivilegedAdmin";
+                }
+            }
         } catch (Exception e) {
-            logger.error("Error parsing ID token and extracting roles", e);
+            logger.error("Error parsing ID token and extracting roles/groups", e);
         }
 
-        // Default role if no roles are found
+        // Default role if no roles or groups are found
         return "RegularUser";
     }
 
