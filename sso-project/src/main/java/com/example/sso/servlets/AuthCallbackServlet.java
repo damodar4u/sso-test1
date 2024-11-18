@@ -55,7 +55,7 @@ public class AuthCallbackServlet extends HttpServlet {
                 logger.info("ID Token: {}", result.idToken());
                 logger.info("Account Username: {}", result.account().username());
 
-                // **Print all claims from the ID token**
+                // Print all claims from the ID token
                 printAllClaims(result.idToken());
 
                 // Extract and assign user roles
@@ -115,6 +115,9 @@ public class AuthCallbackServlet extends HttpServlet {
                 if (groups.contains("GroupF")) {
                     return "PrivilegedAdmin";
                 }
+            } else if (claims.getClaim("hasgroups") != null) {
+                // Handle case where the user belongs to too many groups
+                logger.info("The user belongs to too many groups. Use Microsoft Graph API to fetch group details.");
             }
         } catch (Exception e) {
             logger.error("Error parsing ID token and extracting roles/groups", e);
@@ -139,6 +142,20 @@ public class AuthCallbackServlet extends HttpServlet {
             logger.info("All Claims in the ID Token:");
             for (Map.Entry<String, Object> entry : claims.getClaims().entrySet()) {
                 logger.info("{}: {}", entry.getKey(), entry.getValue());
+            }
+
+            // Handle groups claim explicitly
+            if (claims.getClaim("groups") != null) {
+                @SuppressWarnings("unchecked")
+                List<String> groups = (List<String>) claims.getClaim("groups");
+                logger.info("User belongs to the following groups:");
+                for (String groupId : groups) {
+                    logger.info("Group ID: {}", groupId);
+                }
+            } else if (claims.getClaim("hasgroups") != null) {
+                logger.info("The user belongs to too many groups. Use Microsoft Graph API to fetch group details.");
+            } else {
+                logger.info("No group claims found in the token.");
             }
         } catch (Exception e) {
             logger.error("Error parsing ID token and printing claims", e);
