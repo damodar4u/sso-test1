@@ -18,7 +18,6 @@ import java.util.Map;
 
 public class AuthCallbackServlet extends HttpServlet {
     private static final Logger logger = LoggerFactory.getLogger(AuthCallbackServlet.class);
-    private static final String GRAPH_API_URL = "https://graph.microsoft.com/v1.0/groups/";
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -30,33 +29,42 @@ public class AuthCallbackServlet extends HttpServlet {
 
         if (authCode != null) {
             try {
-                // Exchange authorization code for tokens
+                logger.info("Authorization Code: {}", authCode);
+
+                // Create Confidential Client Application
                 ConfidentialClientApplication app = ConfidentialClientApplication.builder(
                         clientId,
                         ClientCredentialFactory.createFromSecret(clientSecret))
                         .authority("https://login.microsoftonline.com/" + tenantId)
                         .build();
 
+                // Set up authorization parameters
                 AuthorizationCodeParameters parameters = AuthorizationCodeParameters.builder(
                         authCode, new URI(redirectUri))
                         .scopes(Collections.singleton("openid profile email Directory.Read.All"))
                         .build();
 
+                // Acquire token and user details
                 IAuthenticationResult result = app.acquireToken(parameters).join();
 
-                // Parse ID token and extract groups
-                List<String> groupIds = extractGroupIdsFromToken(result.idToken());
-                logger.info("Group IDs from token: {}", groupIds);
+                logger.info("Access Token: {}", result.accessToken());
+                logger.info("Account Username: {}", result.account().username());
 
-                // Fetch group names using Graph API and log them
-                logger.info("Fetching group details for user...");
-                for (String groupId : groupIds) {
-                    String groupName = fetchGroupNameFromGraphAPI(groupId, result.accessToken());
-                    logger.info("Group ID: {}, Group Name: {}", groupId, groupName);
-                }
-                logger.info("User belongs to the following groups:");
-                groupIds.forEach(id -> logger.info("Group ID: {}", id));
+                // Extract and log roles from token
+                printRolesFromToken(result.idToken());
 
+                // Fetch groups via Graph API
+                List<String> groupIds = fetchGroupsFromGraphAPI(result.accessToken());
+                logger.info("Groups from Graph API: {}", groupIds);
+
+                // Assign user and role to session
+                String userRole = getUserRoleFromToken(result.idToken());
+                request.getSession().setAttribute("user", result.account());
+                request.getSession().setAttribute("userRole", userRole);
+
+                logger.info("Assigned Role: {}", userRole);
+
+                // Redirect to the home page
                 response.sendRedirect("/sso-project");
             } catch (Exception e) {
                 logger.error("Error during authentication", e);
@@ -69,32 +77,70 @@ public class AuthCallbackServlet extends HttpServlet {
     }
 
     /**
-     * Extract group IDs from the ID token.
+     * Print roles from the ID token.
      */
-    private List<String> extractGroupIdsFromToken(String idToken) throws Exception {
-        JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
-        JWTClaimsSet claims = jwt.getJWTClaimsSet();
-        return (List<String>) claims.getClaim("groups");
+    private void printRolesFromToken(String idToken) {
+        try {
+            JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
+            JWTClaimsSet claims = jwt.getJWTClaimsSet();
+
+            if (claims.getClaim("roles") != null) {
+                @SuppressWarnings("unchecked")
+                List<String> roles = (List<String>) claims.getClaim("roles");
+                logger.info("Roles from token: {}", roles);
+            } else {
+                logger.info("No roles found in the token.");
+            }
+        } catch (Exception e) {
+            logger.error("Error parsing roles from token", e);
+        }
     }
 
     /**
-     * Fetch the group name from Microsoft Graph API.
+     * Fetch groups for the user from Microsoft Graph API.
      */
-    private String fetchGroupNameFromGraphAPI(String groupId, String accessToken) throws IOException, InterruptedException {
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(GRAPH_API_URL + groupId))
-                .header("Authorization", "Bearer " + accessToken)
-                .build();
+    private List<String> fetchGroupsFromGraphAPI(String accessToken) {
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(new URI("https://graph.microsoft.com/v1.0/me/transitiveMemberOf"))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Accept", "application/json")
+                    .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() == 200) {
-            // Parse response to extract display name
-            Map<String, Object> groupDetails = new com.fasterxml.jackson.databind.ObjectMapper().readValue(response.body(), Map.class);
-            return (String) groupDetails.get("displayName");
-        } else {
-            logger.error("Failed to fetch group name for ID {}: {}", groupId, response.body());
-            return "Unknown Group";
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            logger.info("Graph API Response: {}", response.body());
+
+            // Parse the response to extract group IDs (you may use a JSON parser like Jackson/Gson)
+            return List.of(response.body()); // Replace this with proper JSON parsing
+        } catch (Exception e) {
+            logger.error("Error fetching groups from Graph API", e);
+            return Collections.emptyList();
         }
+    }
+
+    /**
+     * Extract user role from the ID token.
+     */
+    private String getUserRoleFromToken(String idToken) {
+        try {
+            JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
+            JWTClaimsSet claims = jwt.getJWTClaimsSet();
+
+            if (claims.getClaim("roles") != null) {
+                @SuppressWarnings("unchecked")
+                List<String> roles = (List<String>) claims.getClaim("roles");
+
+                if (roles.contains("PrivilegedAdmin")) {
+                    return "PrivilegedAdmin";
+                } else if (roles.contains("RegularUser")) {
+                    return "RegularUser";
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error parsing roles from token", e);
+        }
+
+        return "RegularUser";
     }
 }
