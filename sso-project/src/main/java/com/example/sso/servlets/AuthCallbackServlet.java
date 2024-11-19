@@ -9,12 +9,8 @@ import org.slf4j.LoggerFactory;
 import javax.servlet.http.*;
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 public class AuthCallbackServlet extends HttpServlet {
     private static final Logger logger = LoggerFactory.getLogger(AuthCallbackServlet.class);
@@ -50,19 +46,8 @@ public class AuthCallbackServlet extends HttpServlet {
                 logger.info("Access Token: {}", result.accessToken());
                 logger.info("Account Username: {}", result.account().username());
 
-                // Extract and log roles from token
-                printRolesFromToken(result.idToken());
-
-                // Fetch groups via Graph API
-                List<String> groupIds = fetchGroupsFromGraphAPI(result.accessToken());
-                logger.info("Groups from Graph API: {}", groupIds);
-
-                // Assign user and role to session
-                String userRole = getUserRoleFromToken(result.idToken());
-                request.getSession().setAttribute("user", result.account());
-                request.getSession().setAttribute("userRole", userRole);
-
-                logger.info("Assigned Role: {}", userRole);
+                // Process roles and groups from the token
+                processRolesAndGroups(result.idToken());
 
                 // Redirect to the home page
                 response.sendRedirect("/sso-project");
@@ -77,70 +62,23 @@ public class AuthCallbackServlet extends HttpServlet {
     }
 
     /**
-     * Print roles from the ID token.
+     * Process roles and groups from the token.
      */
-    private void printRolesFromToken(String idToken) {
+    private void processRolesAndGroups(String idToken) {
         try {
             JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
             JWTClaimsSet claims = jwt.getJWTClaimsSet();
 
+            // Extract roles from the token
             if (claims.getClaim("roles") != null) {
                 @SuppressWarnings("unchecked")
                 List<String> roles = (List<String>) claims.getClaim("roles");
-                logger.info("Roles from token: {}", roles);
+                logger.info("Roles (includes groups emitted as roles): {}", roles);
             } else {
                 logger.info("No roles found in the token.");
             }
         } catch (Exception e) {
-            logger.error("Error parsing roles from token", e);
+            logger.error("Error processing roles/groups from token", e);
         }
-    }
-
-    /**
-     * Fetch groups for the user from Microsoft Graph API.
-     */
-    private List<String> fetchGroupsFromGraphAPI(String accessToken) {
-        try {
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI("https://graph.microsoft.com/v1.0/me/transitiveMemberOf"))
-                    .header("Authorization", "Bearer " + accessToken)
-                    .header("Accept", "application/json")
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            logger.info("Graph API Response: {}", response.body());
-
-            // Parse the response to extract group IDs (you may use a JSON parser like Jackson/Gson)
-            return List.of(response.body()); // Replace this with proper JSON parsing
-        } catch (Exception e) {
-            logger.error("Error fetching groups from Graph API", e);
-            return Collections.emptyList();
-        }
-    }
-
-    /**
-     * Extract user role from the ID token.
-     */
-    private String getUserRoleFromToken(String idToken) {
-        try {
-            JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
-            JWTClaimsSet claims = jwt.getJWTClaimsSet();
-
-            if (claims.getClaim("roles") != null) {
-                @SuppressWarnings("unchecked")
-                List<String> roles = (List<String>) claims.getClaim("roles");
-
-                if (roles.contains("PrivilegedAdmin")) {
-                    return "PrivilegedAdmin";
-                } else if (roles.contains("RegularUser")) {
-                    return "RegularUser";
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Error parsing roles from token", e);
-        }
-
-        return "RegularUser";
     }
 }
