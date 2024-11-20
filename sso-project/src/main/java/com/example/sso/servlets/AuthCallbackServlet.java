@@ -7,8 +7,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.servlet.http.*;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -21,22 +25,17 @@ public class AuthCallbackServlet extends HttpServlet {
         String authCode = request.getParameter("code");
         String tenantId = "b84a830a-a2a0-4dde-8caf-6f5dd8729519";
         String clientId = "78888168-35a9-4119-ba50-5fe8f05eefa4";
+        String clientSecret = "wrj8Q~GDDSdyrx1jWLj7DaMISypNvoMIP6cpLbSL";
         String redirectUri = "http://localhost:8080/sso-project/auth/redirect";
-
-        // Log key parameters
-        logger.info("Tenant ID: {}", tenantId);
-        logger.info("Client ID: {}", clientId);
-        logger.info("Redirect URI: {}", redirectUri);
 
         if (authCode != null) {
             try {
-                // Log received auth code
                 logger.info("Authorization Code: {}", authCode);
 
                 // Create Confidential Client Application
                 ConfidentialClientApplication app = ConfidentialClientApplication.builder(
                         clientId,
-                        ClientCredentialFactory.createFromSecret("wrj8Q~GDDSdyrx1jWLj7DaMISypNvoMIP6cpLbSL"))
+                        ClientCredentialFactory.createFromSecret(clientSecret))
                         .authority("https://login.microsoftonline.com/" + tenantId)
                         .build();
 
@@ -50,14 +49,14 @@ public class AuthCallbackServlet extends HttpServlet {
                 IAuthenticationResult result = app.acquireToken(parameters).join();
 
                 // Log token details
-                logger.info("Access Token: {}", result.accessToken());
-                logger.info("Account Username: {}", result.account().username());
+                String accessToken = result.accessToken();
+                String idToken = result.idToken();
 
-                // **Print all claims from the ID token**
-                printAllClaims(result.idToken());
+                logger.info("Access Token: {}", accessToken);
+                logger.info("ID Token: {}", idToken);
 
-                // Extract and log roles (including groups emitted as roles)
-                logRolesFromToken(result.idToken());
+                // Parse ID token to print roles and groups
+                parseAndPrintRolesAndGroups(idToken, accessToken);
 
                 // Redirect to the home page after login
                 response.sendRedirect("/sso-project");
@@ -72,47 +71,69 @@ public class AuthCallbackServlet extends HttpServlet {
     }
 
     /**
-     * Print all claims from the ID token for debugging purposes.
+     * Parse ID token and print roles, groups, and fetch group names if available.
      */
-    private void printAllClaims(String idToken) {
+    private void parseAndPrintRolesAndGroups(String idToken, String accessToken) {
         try {
-            // Parse the ID token using Nimbus JWT library
+            // Parse the ID token
             JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
-
-            // Extract claims from the token
             JWTClaimsSet claims = jwt.getJWTClaimsSet();
 
-            // Log all claims and their values
+            // Print all claims for debugging
             logger.info("All Claims in the ID Token:");
             for (Map.Entry<String, Object> entry : claims.getClaims().entrySet()) {
                 logger.info("{}: {}", entry.getKey(), entry.getValue());
             }
+
+            // Check and print roles
+            if (claims.getClaim("roles") != null) {
+                @SuppressWarnings("unchecked")
+                List<String> roles = (List<String>) claims.getClaim("roles");
+                logger.info("Roles in the ID Token: {}", roles);
+            }
+
+            // Check and print groups
+            if (claims.getClaim("groups") != null) {
+                @SuppressWarnings("unchecked")
+                List<String> groups = (List<String>) claims.getClaim("groups");
+                logger.info("Groups in the ID Token: {}", groups);
+
+                // Fetch group names from Microsoft Graph API
+                fetchGroupNamesFromGraphAPI(accessToken);
+            }
         } catch (Exception e) {
-            logger.error("Error parsing ID token and printing claims", e);
+            logger.error("Error parsing ID token and retrieving roles/groups", e);
         }
     }
 
     /**
-     * Extract and log roles (including groups emitted as roles) from the ID token.
+     * Fetch group names from Microsoft Graph API using the access token.
      */
-    private void logRolesFromToken(String idToken) {
+    private void fetchGroupNamesFromGraphAPI(String accessToken) {
         try {
-            // Parse the ID token
-            JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
+            URL url = new URL("https://graph.microsoft.com/v1.0/me/transitiveMemberOf");
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+            connection.setRequestProperty("Accept", "application/json");
 
-            // Extract claims
-            JWTClaimsSet claims = jwt.getJWTClaimsSet();
+            int responseCode = connection.getResponseCode();
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
 
-            // Extract roles (including groups emitted as roles)
-            if (claims.getClaim("roles") != null) {
-                @SuppressWarnings("unchecked")
-                List<String> roles = (List<String>) claims.getClaim("roles");
-                logger.info("Roles (including groups emitted as roles): {}", roles);
+                logger.info("Group Details from Microsoft Graph API:");
+                logger.info(response.toString());
             } else {
-                logger.info("No roles found in the token.");
+                logger.error("Failed to fetch group details. HTTP Response Code: {}", responseCode);
             }
         } catch (Exception e) {
-            logger.error("Error parsing ID token and extracting roles", e);
+            logger.error("Error fetching group details from Microsoft Graph API", e);
         }
     }
 }
