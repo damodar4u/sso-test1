@@ -13,9 +13,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class AuthCallbackServlet extends HttpServlet {
     private static final Logger logger = LoggerFactory.getLogger(AuthCallbackServlet.class);
@@ -98,7 +96,8 @@ public class AuthCallbackServlet extends HttpServlet {
                 logger.info("Claim Sources: {}", claims.getClaim("_claim_sources"));
 
                 // Fetch group details using Microsoft Graph API
-                fetchGroupsFromClaimSource(accessToken);
+                List<String> groupIds = fetchGroupsFromClaimSource(accessToken);
+                fetchGroupOrRoleNames(groupIds, accessToken);
             }
         } catch (Exception e) {
             logger.error("Error parsing ID token and retrieving roles/groups", e);
@@ -108,7 +107,8 @@ public class AuthCallbackServlet extends HttpServlet {
     /**
      * Fetch group details from Microsoft Graph API using claim sources.
      */
-    private void fetchGroupsFromClaimSource(String accessToken) {
+    private List<String> fetchGroupsFromClaimSource(String accessToken) {
+        List<String> groupIds = new ArrayList<>();
         try {
             URL url = new URL("https://graph.microsoft.com/v1.0/me/getMemberObjects");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -132,13 +132,61 @@ public class AuthCallbackServlet extends HttpServlet {
                 }
                 reader.close();
 
-                logger.info("Group Details from Microsoft Graph API (getMemberObjects):");
-                logger.info(response.toString());
+                // Parse group IDs from the response
+                logger.info("Group Details from Microsoft Graph API (getMemberObjects): {}", response);
+                groupIds = extractGroupIdsFromResponse(response.toString());
             } else {
                 logger.error("Failed to fetch group details. HTTP Response Code: {}", responseCode);
             }
         } catch (Exception e) {
             logger.error("Error fetching group details from Microsoft Graph API", e);
         }
+        return groupIds;
+    }
+
+    /**
+     * Fetch group/role names from Microsoft Graph API using IDs.
+     */
+    private void fetchGroupOrRoleNames(List<String> groupIds, String accessToken) {
+        try {
+            URL url = new URL("https://graph.microsoft.com/v1.0/directoryObjects/getByIds");
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setDoOutput(true);
+
+            // Write the request body
+            String requestBody = "{ \"ids\": " + groupIds.toString() + ", \"types\": [\"Group\", \"Role\"] }";
+            connection.getOutputStream().write(requestBody.getBytes());
+
+            // Process the response
+            int responseCode = connection.getResponseCode();
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+
+                // Log group/role names
+                logger.info("Group/Role Names from Microsoft Graph API (getByIds): {}", response);
+            } else {
+                logger.error("Failed to fetch group/role names. HTTP Response Code: {}", responseCode);
+            }
+        } catch (Exception e) {
+            logger.error("Error fetching group/role names from Microsoft Graph API", e);
+        }
+    }
+
+    /**
+     * Helper method to extract group IDs from API response.
+     */
+    private List<String> extractGroupIdsFromResponse(String response) {
+        // Implement parsing logic to extract group IDs from response JSON.
+        // This is a placeholder method.
+        return Arrays.asList(response.split(","));
     }
 }
