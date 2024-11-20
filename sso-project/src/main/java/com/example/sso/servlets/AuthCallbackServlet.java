@@ -3,13 +3,13 @@ package com.example.sso.servlets;
 import com.microsoft.aad.msal4j.*;
 import com.nimbusds.jwt.JWT;
 import com.nimbusds.jwt.JWTClaimsSet;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.servlet.http.*;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
@@ -19,7 +19,7 @@ public class AuthCallbackServlet extends HttpServlet {
     private static final Logger logger = LoggerFactory.getLogger(AuthCallbackServlet.class);
 
     @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response) {
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
         String authCode = request.getParameter("code");
         String tenantId = "b84a830a-a2a0-4dde-8caf-6f5dd8729519";
         String clientId = "78888168-35a9-4119-ba50-5fe8f05eefa4";
@@ -37,78 +37,86 @@ public class AuthCallbackServlet extends HttpServlet {
                         .authority("https://login.microsoftonline.com/" + tenantId)
                         .build();
 
-                // Acquire token
+                // Set up authorization parameters
                 AuthorizationCodeParameters parameters = AuthorizationCodeParameters.builder(
                         authCode, new URI(redirectUri))
                         .scopes(Collections.singleton("openid profile email Directory.Read.All"))
                         .build();
+
+                // Acquire token and user details
                 IAuthenticationResult result = app.acquireToken(parameters).join();
 
                 // Log token details
                 String accessToken = result.accessToken();
                 String idToken = result.idToken();
+
                 logger.info("Access Token: {}", accessToken);
                 logger.info("ID Token: {}", idToken);
 
-                // Parse claims and handle groups and roles
-                parseAndHandleClaims(idToken, accessToken);
+                // Parse ID token and print roles, groups, and claim sources
+                parseAndPrintRolesGroupsAndClaims(idToken, accessToken);
 
+                // Redirect to the home page after login
                 response.sendRedirect("/sso-project");
             } catch (Exception e) {
                 logger.error("Error during authentication", e);
-                try {
-                    response.sendRedirect("/sso-project/error.jsp");
-                } catch (IOException ioException) {
-                    logger.error("Error redirecting after failure", ioException);
-                }
+                response.sendRedirect("/sso-project/error.jsp");
             }
         } else {
             logger.error("Authorization code is missing");
-            try {
-                response.sendRedirect("/sso-project/error.jsp");
-            } catch (IOException e) {
-                logger.error("Error redirecting to error page", e);
-            }
+            response.sendRedirect("/sso-project/error.jsp");
         }
     }
 
-    private void parseAndHandleClaims(String idToken, String accessToken) {
+    /**
+     * Parse ID token and print roles, groups, and handle claim sources.
+     */
+    private void parseAndPrintRolesGroupsAndClaims(String idToken, String accessToken) {
         try {
             // Parse the ID token
             JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
             JWTClaimsSet claims = jwt.getJWTClaimsSet();
 
-            // Log all claims
+            // Print all claims for debugging
             logger.info("All Claims in the ID Token:");
-            claims.getClaims().forEach((key, value) -> logger.info("{}: {}", key, value));
-
-            // Print roles if available
-            if (claims.getClaim("roles") != null) {
-                List<String> roles = claims.getJSONArrayClaim("roles");
-                logger.info("Roles: {}", roles);
+            for (Map.Entry<String, Object> entry : claims.getClaims().entrySet()) {
+                logger.info("{}: {}", entry.getKey(), entry.getValue());
             }
 
-            // Check for claim sources and handle groups
+            // Check and print roles
+            if (claims.getClaim("roles") != null) {
+                @SuppressWarnings("unchecked")
+                List<String> roles = (List<String>) claims.getClaim("roles");
+                logger.info("Roles in the ID Token: {}", roles);
+            }
+
+            // Check and print groups or claim sources
             if (claims.getClaim("_claim_names") != null && claims.getClaim("_claim_sources") != null) {
                 logger.info("Claim Names: {}", claims.getClaim("_claim_names"));
                 logger.info("Claim Sources: {}", claims.getClaim("_claim_sources"));
 
-                // Fetch and log groups using transitiveMemberOf
-                fetchAndLogGroupsUsingTransitiveMemberOf(accessToken);
+                // Fetch group details using Microsoft Graph API
+                List<String> groupIds = fetchGroupsFromTransitiveMemberOf(accessToken);
+                logger.info("Group IDs from transitiveMemberOf: {}", groupIds);
             }
         } catch (Exception e) {
-            logger.error("Error parsing ID token and retrieving claims", e);
+            logger.error("Error parsing ID token and retrieving roles/groups", e);
         }
     }
 
-    private void fetchAndLogGroupsUsingTransitiveMemberOf(String accessToken) {
+    /**
+     * Fetch group details from Microsoft Graph API using transitiveMemberOf.
+     */
+    private List<String> fetchGroupsFromTransitiveMemberOf(String accessToken) {
+        List<String> groupNames = new ArrayList<>();
         try {
             URL url = new URL("https://graph.microsoft.com/v1.0/me/transitiveMemberOf");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
             connection.setRequestProperty("Authorization", "Bearer " + accessToken);
-            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Content-Type", "application/json");
 
+            // Process the response
             int responseCode = connection.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
@@ -119,25 +127,22 @@ public class AuthCallbackServlet extends HttpServlet {
                 }
                 reader.close();
 
-                // Parse response and print group details
-                logger.info("Groups from Microsoft Graph API (transitiveMemberOf):");
-                parseGroupDetails(response.toString());
+                // Parse group display names and IDs from the response
+                JSONObject jsonResponse = new JSONObject(response.toString());
+                JSONArray values = jsonResponse.getJSONArray("value");
+                for (int i = 0; i < values.length(); i++) {
+                    JSONObject group = values.getJSONObject(i);
+                    String groupName = group.optString("displayName", "Unknown");
+                    String groupId = group.optString("id", "Unknown");
+                    logger.info("Group Name: {}, Group ID: {}", groupName, groupId);
+                    groupNames.add(groupName);
+                }
             } else {
-                logger.error("Failed to fetch groups. HTTP Response Code: {}", responseCode);
+                logger.error("Failed to fetch group details. HTTP Response Code: {}", responseCode);
             }
         } catch (Exception e) {
-            logger.error("Error fetching groups using transitiveMemberOf", e);
+            logger.error("Error fetching group details from Microsoft Graph API", e);
         }
-    }
-
-    private void parseGroupDetails(String response) {
-        JSONObject jsonResponse = new JSONObject(response);
-        JSONArray groupsArray = jsonResponse.getJSONArray("value");
-        for (int i = 0; i < groupsArray.length(); i++) {
-            JSONObject group = groupsArray.getJSONObject(i);
-            String id = group.getString("id");
-            String displayName = group.optString("displayName", "No Display Name");
-            logger.info("Group ID: {} | Display Name: {}", id, displayName);
-        }
+        return groupNames;
     }
 }
