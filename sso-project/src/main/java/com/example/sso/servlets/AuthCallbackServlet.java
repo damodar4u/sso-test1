@@ -55,8 +55,8 @@ public class AuthCallbackServlet extends HttpServlet {
                 logger.info("Access Token: {}", accessToken);
                 logger.info("ID Token: {}", idToken);
 
-                // Parse ID token to print roles and groups
-                parseAndPrintRolesAndGroups(idToken, accessToken);
+                // Parse ID token and print roles, groups, and claim sources
+                parseAndPrintRolesGroupsAndClaims(idToken, accessToken);
 
                 // Redirect to the home page after login
                 response.sendRedirect("/sso-project");
@@ -71,9 +71,9 @@ public class AuthCallbackServlet extends HttpServlet {
     }
 
     /**
-     * Parse ID token and print roles, groups, and fetch group names if available.
+     * Parse ID token and print roles, groups, and handle claim sources.
      */
-    private void parseAndPrintRolesAndGroups(String idToken, String accessToken) {
+    private void parseAndPrintRolesGroupsAndClaims(String idToken, String accessToken) {
         try {
             // Parse the ID token
             JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
@@ -92,14 +92,13 @@ public class AuthCallbackServlet extends HttpServlet {
                 logger.info("Roles in the ID Token: {}", roles);
             }
 
-            // Check and print groups
-            if (claims.getClaim("groups") != null) {
-                @SuppressWarnings("unchecked")
-                List<String> groups = (List<String>) claims.getClaim("groups");
-                logger.info("Groups in the ID Token: {}", groups);
+            // Check and print groups or claim sources
+            if (claims.getClaim("_claim_names") != null && claims.getClaim("_claim_sources") != null) {
+                logger.info("Claim Names: {}", claims.getClaim("_claim_names"));
+                logger.info("Claim Sources: {}", claims.getClaim("_claim_sources"));
 
-                // Fetch group names from Microsoft Graph API
-                fetchGroupNamesFromGraphAPI(accessToken);
+                // Fetch group details using Microsoft Graph API
+                fetchGroupsFromClaimSource(accessToken);
             }
         } catch (Exception e) {
             logger.error("Error parsing ID token and retrieving roles/groups", e);
@@ -107,16 +106,22 @@ public class AuthCallbackServlet extends HttpServlet {
     }
 
     /**
-     * Fetch group names from Microsoft Graph API using the access token.
+     * Fetch group details from Microsoft Graph API using claim sources.
      */
-    private void fetchGroupNamesFromGraphAPI(String accessToken) {
+    private void fetchGroupsFromClaimSource(String accessToken) {
         try {
-            URL url = new URL("https://graph.microsoft.com/v1.0/me/transitiveMemberOf");
+            URL url = new URL("https://graph.microsoft.com/v1.0/me/getMemberObjects");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("GET");
+            connection.setRequestMethod("POST");
             connection.setRequestProperty("Authorization", "Bearer " + accessToken);
-            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setDoOutput(true);
 
+            // Write the request body
+            String requestBody = "{ \"securityEnabledOnly\": false }";
+            connection.getOutputStream().write(requestBody.getBytes());
+
+            // Process the response
             int responseCode = connection.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
@@ -127,7 +132,7 @@ public class AuthCallbackServlet extends HttpServlet {
                 }
                 reader.close();
 
-                logger.info("Group Details from Microsoft Graph API:");
+                logger.info("Group Details from Microsoft Graph API (getMemberObjects):");
                 logger.info(response.toString());
             } else {
                 logger.error("Failed to fetch group details. HTTP Response Code: {}", responseCode);
