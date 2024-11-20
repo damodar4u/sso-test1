@@ -8,8 +8,8 @@ import org.slf4j.LoggerFactory;
 
 import javax.servlet.http.*;
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
@@ -19,7 +19,7 @@ public class AuthCallbackServlet extends HttpServlet {
     private static final Logger logger = LoggerFactory.getLogger(AuthCallbackServlet.class);
 
     @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) {
         String authCode = request.getParameter("code");
         String tenantId = "b84a830a-a2a0-4dde-8caf-6f5dd8729519";
         String clientId = "78888168-35a9-4119-ba50-5fe8f05eefa4";
@@ -37,91 +37,78 @@ public class AuthCallbackServlet extends HttpServlet {
                         .authority("https://login.microsoftonline.com/" + tenantId)
                         .build();
 
-                // Set up authorization parameters
+                // Acquire token
                 AuthorizationCodeParameters parameters = AuthorizationCodeParameters.builder(
                         authCode, new URI(redirectUri))
                         .scopes(Collections.singleton("openid profile email Directory.Read.All"))
                         .build();
-
-                // Acquire token and user details
                 IAuthenticationResult result = app.acquireToken(parameters).join();
 
                 // Log token details
                 String accessToken = result.accessToken();
                 String idToken = result.idToken();
-
                 logger.info("Access Token: {}", accessToken);
                 logger.info("ID Token: {}", idToken);
 
-                // Parse ID token and print roles, groups, and claim sources
-                parseAndPrintRolesGroupsAndClaims(idToken, accessToken);
+                // Parse claims and handle groups and roles
+                parseAndHandleClaims(idToken, accessToken);
 
-                // Redirect to the home page after login
                 response.sendRedirect("/sso-project");
             } catch (Exception e) {
                 logger.error("Error during authentication", e);
-                response.sendRedirect("/sso-project/error.jsp");
+                try {
+                    response.sendRedirect("/sso-project/error.jsp");
+                } catch (IOException ioException) {
+                    logger.error("Error redirecting after failure", ioException);
+                }
             }
         } else {
             logger.error("Authorization code is missing");
-            response.sendRedirect("/sso-project/error.jsp");
+            try {
+                response.sendRedirect("/sso-project/error.jsp");
+            } catch (IOException e) {
+                logger.error("Error redirecting to error page", e);
+            }
         }
     }
 
-    /**
-     * Parse ID token and print roles, groups, and handle claim sources.
-     */
-    private void parseAndPrintRolesGroupsAndClaims(String idToken, String accessToken) {
+    private void parseAndHandleClaims(String idToken, String accessToken) {
         try {
             // Parse the ID token
             JWT jwt = com.nimbusds.jwt.JWTParser.parse(idToken);
             JWTClaimsSet claims = jwt.getJWTClaimsSet();
 
-            // Print all claims for debugging
+            // Log all claims
             logger.info("All Claims in the ID Token:");
-            for (Map.Entry<String, Object> entry : claims.getClaims().entrySet()) {
-                logger.info("{}: {}", entry.getKey(), entry.getValue());
-            }
+            claims.getClaims().forEach((key, value) -> logger.info("{}: {}", key, value));
 
-            // Check and print roles
+            // Print roles if available
             if (claims.getClaim("roles") != null) {
-                @SuppressWarnings("unchecked")
-                List<String> roles = (List<String>) claims.getClaim("roles");
-                logger.info("Roles in the ID Token: {}", roles);
+                List<String> roles = claims.getJSONArrayClaim("roles");
+                logger.info("Roles: {}", roles);
             }
 
-            // Check and print groups or claim sources
+            // Check for claim sources and handle groups
             if (claims.getClaim("_claim_names") != null && claims.getClaim("_claim_sources") != null) {
                 logger.info("Claim Names: {}", claims.getClaim("_claim_names"));
                 logger.info("Claim Sources: {}", claims.getClaim("_claim_sources"));
 
-                // Fetch group details using Microsoft Graph API
-                List<String> groupIds = fetchGroupsFromClaimSource(accessToken);
-                fetchGroupOrRoleNames(groupIds, accessToken);
+                // Fetch and log groups using transitiveMemberOf
+                fetchAndLogGroupsUsingTransitiveMemberOf(accessToken);
             }
         } catch (Exception e) {
-            logger.error("Error parsing ID token and retrieving roles/groups", e);
+            logger.error("Error parsing ID token and retrieving claims", e);
         }
     }
 
-    /**
-     * Fetch group details from Microsoft Graph API using claim sources.
-     */
-    private List<String> fetchGroupsFromClaimSource(String accessToken) {
-        List<String> groupIds = new ArrayList<>();
+    private void fetchAndLogGroupsUsingTransitiveMemberOf(String accessToken) {
         try {
-            URL url = new URL("https://graph.microsoft.com/v1.0/me/getMemberObjects");
+            URL url = new URL("https://graph.microsoft.com/v1.0/me/transitiveMemberOf");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("POST");
+            connection.setRequestMethod("GET");
             connection.setRequestProperty("Authorization", "Bearer " + accessToken);
-            connection.setRequestProperty("Content-Type", "application/json");
-            connection.setDoOutput(true);
+            connection.setRequestProperty("Accept", "application/json");
 
-            // Write the request body
-            String requestBody = "{ \"securityEnabledOnly\": false }";
-            connection.getOutputStream().write(requestBody.getBytes());
-
-            // Process the response
             int responseCode = connection.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
@@ -132,61 +119,25 @@ public class AuthCallbackServlet extends HttpServlet {
                 }
                 reader.close();
 
-                // Parse group IDs from the response
-                logger.info("Group Details from Microsoft Graph API (getMemberObjects): {}", response);
-                groupIds = extractGroupIdsFromResponse(response.toString());
+                // Parse response and print group details
+                logger.info("Groups from Microsoft Graph API (transitiveMemberOf):");
+                parseGroupDetails(response.toString());
             } else {
-                logger.error("Failed to fetch group details. HTTP Response Code: {}", responseCode);
+                logger.error("Failed to fetch groups. HTTP Response Code: {}", responseCode);
             }
         } catch (Exception e) {
-            logger.error("Error fetching group details from Microsoft Graph API", e);
-        }
-        return groupIds;
-    }
-
-    /**
-     * Fetch group/role names from Microsoft Graph API using IDs.
-     */
-    private void fetchGroupOrRoleNames(List<String> groupIds, String accessToken) {
-        try {
-            URL url = new URL("https://graph.microsoft.com/v1.0/directoryObjects/getByIds");
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("POST");
-            connection.setRequestProperty("Authorization", "Bearer " + accessToken);
-            connection.setRequestProperty("Content-Type", "application/json");
-            connection.setDoOutput(true);
-
-            // Write the request body
-            String requestBody = "{ \"ids\": " + groupIds.toString() + ", \"types\": [\"Group\", \"Role\"] }";
-            connection.getOutputStream().write(requestBody.getBytes());
-
-            // Process the response
-            int responseCode = connection.getResponseCode();
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                reader.close();
-
-                // Log group/role names
-                logger.info("Group/Role Names from Microsoft Graph API (getByIds): {}", response);
-            } else {
-                logger.error("Failed to fetch group/role names. HTTP Response Code: {}", responseCode);
-            }
-        } catch (Exception e) {
-            logger.error("Error fetching group/role names from Microsoft Graph API", e);
+            logger.error("Error fetching groups using transitiveMemberOf", e);
         }
     }
 
-    /**
-     * Helper method to extract group IDs from API response.
-     */
-    private List<String> extractGroupIdsFromResponse(String response) {
-        // Implement parsing logic to extract group IDs from response JSON.
-        // This is a placeholder method.
-        return Arrays.asList(response.split(","));
+    private void parseGroupDetails(String response) {
+        JSONObject jsonResponse = new JSONObject(response);
+        JSONArray groupsArray = jsonResponse.getJSONArray("value");
+        for (int i = 0; i < groupsArray.length(); i++) {
+            JSONObject group = groupsArray.getJSONObject(i);
+            String id = group.getString("id");
+            String displayName = group.optString("displayName", "No Display Name");
+            logger.info("Group ID: {} | Display Name: {}", id, displayName);
+        }
     }
 }
