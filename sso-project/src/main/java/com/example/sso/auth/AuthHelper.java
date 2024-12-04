@@ -8,9 +8,9 @@ public class AuthHelper {
     static {
         try {
             app = ConfidentialClientApplication.builder(
-                "78888168-35a9-4119-ba50-5fe8f05eefa4",
-                ClientCredentialFactory.createFromSecret("wrj8Q~GDDSdyrx1jWLj7DaMISypNvoMIP6cpLbSL"))
-                .authority("https://login.microsoftonline.com/b84a830a-a2a0-4dde-8caf-6f5dd8729519")
+                "xxxxxxxxxxxxxx",
+                ClientCredentialFactory.createFromSecret("xxxxxxxxxxxxxxx))
+                .authority("https://login.microsoftonline.com/xxxxxxxxxx")
                 .build();
         } catch (Exception e) {
             throw new RuntimeException(e);
