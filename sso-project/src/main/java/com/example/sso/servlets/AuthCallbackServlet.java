@@ -21,9 +21,9 @@ public class AuthCallbackServlet extends HttpServlet {
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
         String authCode = request.getParameter("code");
-        String tenantId = "b84a830a-a2a0-4dde-8caf-6f5dd8729519";
-        String clientId = "78888168-35a9-4119-ba50-5fe8f05eefa4";
-        String clientSecret = "wrj8Q~GDDSdyrx1jWLj7DaMISypNvoMIP6cpLbSL";
+        String tenantId = "xxxxxxxxxxxxxxxxx";
+        String clientId = "xxxxxxxxxxxxxxx";
+        String clientSecret = "xxxxxxxxxxxxxxxx";
         String redirectUri = "http://localhost:8080/sso-project/auth/redirect";
 
         if (authCode != null) {
